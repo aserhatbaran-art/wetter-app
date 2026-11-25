@@ -1,0 +1,7 @@
+# Lokale Claude-Dateien (nur launch.json wird geteilt)
+.claude/*
+!.claude/launch.json
+
+# System
+Thumbs.db
+.DS_Store

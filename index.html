@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.open-meteo.com https://geocoding-api.open-meteo.com; img-src 'self' data:; style-src 'self'; script-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="theme-color" content="#f4f6fa" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0f1420" media="(prefers-color-scheme: dark)">
+  <meta name="description" content="Schlanke Wetter-App: Tagesablauf, 7 und 15 Tage">
+  <title>Wetter</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <button id="btn-place" class="place" type="button" aria-label="Ort wählen">
+      <span id="place-name">Ort wählen</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>
+    </button>
+    <button id="btn-locate" class="icon-btn" type="button" aria-label="Aktuellen Standort verwenden">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+    </button>
+    <button id="btn-refresh" class="icon-btn" type="button" aria-label="Aktualisieren">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg>
+    </button>
+  </header>
+
+  <main>
+    <section id="empty" class="empty" hidden>
+      <p class="empty-icon" aria-hidden="true"></p>
+      <p>Für welchen Ort soll das Wetter angezeigt werden?</p>
+      <button id="empty-locate" class="btn primary" type="button">Meinen Standort verwenden</button>
+      <button id="empty-search" class="btn" type="button">Ort suchen</button>
+    </section>
+
+    <section id="now" class="now" hidden>
+      <div class="now-main">
+        <span id="cur-icon" class="now-icon" aria-hidden="true"></span>
+        <span id="cur-temp" class="now-temp"></span>
+      </div>
+      <p id="cur-text" class="now-text"></p>
+      <p id="cur-meta" class="now-meta"></p>
+    </section>
+
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+
+    <nav id="tabs" class="tabs" role="tablist" hidden>
+      <button type="button" role="tab" data-view="hours">Tagesablauf</button>
+      <button type="button" role="tab" data-view="d7">7 Tage</button>
+      <button type="button" role="tab" data-view="d15">15 Tage</button>
+    </nav>
+
+    <section id="panel" class="panel" role="tabpanel"></section>
+  </main>
+
+  <footer class="foot">
+    Wetterdaten: <a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo.com</a> (CC BY 4.0)
+  </footer>
+
+  <dialog id="search" class="search" aria-label="Ort suchen">
+    <div class="search-head">
+      <input id="search-input" type="search" placeholder="Ort oder PLZ suchen …" autocomplete="off" enterkeyhint="search" maxlength="80">
+      <button id="search-close" class="icon-btn" type="button" aria-label="Schließen">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <button id="search-locate" class="row-btn" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+      Meinen Standort verwenden
+    </button>
+    <p id="search-hint" class="hint"></p>
+    <ul id="search-results" class="list"></ul>
+  </dialog>
+</body>
+</html>
