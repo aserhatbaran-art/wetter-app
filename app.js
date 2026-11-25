@@ -6,6 +6,8 @@ const API_GEO = 'https://geocoding-api.open-meteo.com/v1/search';
 const STALE_MS = 10 * 60 * 1000;   // ab diesem Alter wird neu geladen
 const TIMEOUT_MS = 10000;
 const K = { loc: 'wx.loc', data: 'wx.data', recent: 'wx.recent', view: 'wx.view' };
+// Erhöhen, wenn sich Abruf oder Modellwahl ändert: alte gespeicherte Wetterdaten werden dann verworfen.
+const DATA_V = 3;
 
 const $ = (s) => document.querySelector(s);
 const store = {
@@ -196,8 +198,8 @@ const MODEL_SHORT = 'best_match';
 const MODEL_LONG = 'ecmwf_ifs';
 const SHORT_DAYS = 2;
 const VARS = {
-  hourly: 'temperature_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,is_day',
-  daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,sunrise,sunset',
+  hourly: 'temperature_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,is_day',
+  daily: 'weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_sum,precipitation_probability_max,sunrise,sunset',
 };
 
 /** Fügt die Modellreihen (…_best_match / …_ecmwf_ifs) zu einer Reihe zusammen; fehlt ein Wert, springt das andere Modell ein. */
@@ -258,7 +260,7 @@ async function refresh(force = false) {
     state.data = d;
     state.fetchedAt = Date.now();
     state.offline = false;
-    store.set(K.data, { loc, fetchedAt: state.fetchedAt, data: d });
+    store.set(K.data, { v: DATA_V, loc, fetchedAt: state.fetchedAt, data: d });
     render();
   } catch {
     state.offline = true;
@@ -393,7 +395,8 @@ function chart(d, idx, dayMode) {
   const X = (k) => pl + (k + 0.5) * cw;
 
   const temps = idx.map((i) => h.temperature_2m[i]);
-  const valid = temps.filter((v) => v != null);
+  const feels = idx.map((i) => h.apparent_temperature?.[i] ?? null);
+  const valid = temps.concat(feels).filter((v) => v != null);
   const tmin = Math.min(...valid), tmax = Math.max(...valid);
   const range = Math.max(tmax - tmin, 4);
   const lo = (tmin + tmax) / 2 - range / 2;
@@ -423,14 +426,21 @@ function chart(d, idx, dayMode) {
   });
   svg.append(sv('line', { x1: pl, y1: pBot + 0.5, x2: W - pr, y2: pBot + 0.5 }, 'ch-axis'));
 
-  // Temperaturlinie
-  let path = '', pen = false;
-  temps.forEach((v, k) => {
-    if (v == null) { pen = false; return; }
-    path += `${pen ? 'L' : 'M'}${X(k).toFixed(1)} ${Y(v).toFixed(1)}`;
-    pen = true;
-  });
-  svg.append(sv('path', { d: path }, 'ch-line'));
+  // Temperaturlinie (durchgezogen) und gefühlte Temperatur (gestrichelt)
+  const line = (vals) => {
+    let path = '', pen = false;
+    vals.forEach((v, k) => {
+      if (v == null) { pen = false; return; }
+      path += `${pen ? 'L' : 'M'}${X(k).toFixed(1)} ${Y(v).toFixed(1)}`;
+      pen = true;
+    });
+    return path;
+  };
+  if (feels.some((v) => v != null)) {
+    svg.append(sv('path', { d: line(feels) }, 'ch-feel'));
+    svg.append(svText({ x: W - pr - 2, y: 11 }, 'ch-lbl end', '— Temperatur   - - gefühlt'));
+  }
+  svg.append(sv('path', { d: line(temps) }, 'ch-line'));
 
   // Beschriftung alle 3 Stunden
   temps.forEach((v, k) => {
@@ -536,13 +546,17 @@ function renderHours(d) {
     if (!state.day && lastDate && date !== lastDate) ul.append(el('li', 'sep', `${dayLabel(d, date)}, ${fmtDm.format(parseDay(date))}`));
     lastDate = date;
     const li = el('li', 'hour');
-    li.setAttribute('aria-label', `${hhmm(h.time[i])} Uhr, ${wxText(h.weather_code[i])}, ${deg(h.temperature_2m[i])}`);
+    const feel = h.apparent_temperature?.[i];
+    li.setAttribute('aria-label', `${hhmm(h.time[i])} Uhr, ${wxText(h.weather_code[i])}, ${deg(h.temperature_2m[i])}` +
+      (feel != null ? `, gefühlt ${deg(feel)}` : ''));
+    const tmp = el('span', 'tmp', deg(h.temperature_2m[i]));
+    if (feel != null) tmp.append(el('small', null, `gef. ${deg(feel)}`));
     const ic = el('span', 'i');
     ic.append(icon(h.weather_code[i], h.is_day[i]));
     li.append(
       el('span', 't', k === 0 && !state.day ? 'Jetzt' : hhmm(h.time[i])),
       ic,
-      el('span', 'tmp', deg(h.temperature_2m[i])),
+      tmp,
       el('span', 'p', precipText(h.precipitation_probability?.[i], h.precipitation?.[i])),
       el('span', 'w', `${r0(h.wind_speed_10m[i])} km/h`),
     );
@@ -567,17 +581,20 @@ function renderDays(d, n) {
   const head = el('div', 'panel-head');
   head.append(el('h2', null, `${to - from} Tage`), el('small', null, 'Tippen für Tagesablauf'));
   out.push(head);
-  if (n > 7) out.push(el('p', 'note', 'Ab Tag 8 ist die Vorhersage nur ein Trend und deutlich unsicherer.'));
+  out.push(el('p', 'note', 'Kleine graue Zahlen: gefühlte Temperatur.' +
+    (n > 7 ? ' Ab Tag 8 ist die Vorhersage nur ein Trend und deutlich unsicherer.' : '')));
 
   const ul = el('ul', 'list');
   for (let i = from; i < to; i++) {
     const iso = dl.time[i];
     const mn = dl.temperature_2m_min[i], mx = dl.temperature_2m_max[i];
+    const fmn = dl.apparent_temperature_min?.[i], fmx = dl.apparent_temperature_max?.[i];
     const prob = dl.precipitation_probability_max?.[i];
     const sum = dl.precipitation_sum?.[i] ?? 0;
     const btn = el('button', 'day' + (i - from >= 7 ? ' trend' : ''));
     btn.type = 'button';
     btn.setAttribute('aria-label', `${fmtLong.format(parseDay(iso))}: ${wxText(dl.weather_code[i])}, ${deg(mn)} bis ${deg(mx)}` +
+      (fmn != null && fmx != null ? `, gefühlt ${deg(fmn)} bis ${deg(fmx)}` : '') +
       (sum >= 0.1 ? `, ${mm1(sum)} mm Niederschlag` : ''));
 
     const dd = el('span', 'd', dayLabel(d, iso));
@@ -596,7 +613,11 @@ function renderDays(d, n) {
       fill.style.width = `${((mx - mn) / span) * 100}%`;
     }
     bar.append(fill);
-    btn.append(dd, ic, p, el('span', 'lo', deg(mn)), bar, el('span', 'hi', deg(mx)));
+    const loEl = el('span', 'lo', deg(mn));
+    const hiEl = el('span', 'hi', deg(mx));
+    if (fmn != null) loEl.append(el('small', null, deg(fmn)));
+    if (fmx != null) hiEl.append(el('small', null, deg(fmx)));
+    btn.append(dd, ic, p, loEl, bar, hiEl);
     btn.addEventListener('click', () => {
       state.day = i === from ? null : iso;
       setView('hours');
@@ -671,7 +692,7 @@ async function doSearch(q) {
 /* ---------- Start ---------- */
 function init() {
   const cached = store.get(K.data);
-  if (cached && state.loc && sameLoc(cached.loc, state.loc) && cached.data?.hourly) {
+  if (cached?.v === DATA_V && state.loc && sameLoc(cached.loc, state.loc) && cached.data?.hourly) {
     state.data = cached.data;
     state.fetchedAt = cached.fetchedAt || 0;
   }
@@ -693,7 +714,11 @@ function init() {
     b.addEventListener('click', () => { if (b.dataset.view !== 'hours') state.day = null; setView(b.dataset.view); }));
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') { refresh(); trackGps(); }
+    if (document.visibilityState !== 'visible') return;
+    refresh();
+    trackGps();
+    // Installierte App kommt oft aus dem Hintergrund zurück, ohne neu zu laden: Update aktiv prüfen.
+    navigator.serviceWorker?.getRegistration().then((r) => r?.update()).catch(() => {});
   });
   window.addEventListener('online', () => refresh(true));
 
@@ -702,7 +727,17 @@ function init() {
   trackGps();
 
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+    // Neue Version übernimmt die Kontrolle → einmal neu laden, damit sie sofort sichtbar ist
+    // (nicht beim allerersten Installieren).
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloaded) return;
+      reloaded = true;
+      location.reload();
+    });
+    window.addEventListener('load', () =>
+      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {}));
   }
 }
 

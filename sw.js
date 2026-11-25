@@ -1,10 +1,16 @@
 'use strict';
 // Bei jeder Änderung an App-Dateien die Version erhöhen.
-const CACHE = 'wetter-v3';
+const CACHE = 'wetter-v4';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 
+// cache: 'reload' umgeht den HTTP-Cache des Browsers (GitHub Pages: max-age=600),
+// sonst könnte die neue Version alte Dateien in ihren Cache übernehmen.
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(CACHE)
+      .then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (e) => {
@@ -23,7 +29,8 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     caches.open(CACHE).then(async (cache) => {
       const cached = await cache.match(req, { ignoreSearch: true });
-      const network = fetch(req)
+      // no-cache: beim Server nachfragen (ETag), nicht blind den HTTP-Cache nehmen
+      const network = fetch(req, { cache: 'no-cache' })
         .then((res) => { if (res.ok) cache.put(req, res.clone()); return res; })
         .catch(() => cached || Response.error());
       if (cached) { e.waitUntil(network); return cached; }

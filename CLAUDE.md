@@ -22,7 +22,8 @@ Zweck: Schlanke, installierbare Wetter-Webapp für Android mit Tagesablauf, 7 un
 - Koordinaten auf 2 Nachkommastellen runden (~1 km, Privatsphäre)
 
 ## Achtung
-- Nach jeder Änderung an App-Dateien `CACHE` in `sw.js` hochzählen, sonst sehen installierte Geräte die alte Version
+- Nach jeder Änderung an App-Dateien `CACHE` in `sw.js` hochzählen, sonst sehen installierte Geräte die alte Version. Neuer SW lädt mit `cache: 'reload'` (GitHub Pages hat `max-age=600`) und die App lädt bei `controllerchange` einmal neu
+- Ändert sich Abruf/Modellwahl/Variablen: `DATA_V` in `app.js` erhöhen, damit gespeicherte Altdaten verworfen werden
 - Neue externe Hosts müssen in die CSP (`connect-src`) in `index.html`
 - Service Worker und GPS brauchen HTTPS (außer localhost); live über GitHub Pages: https://aserhatbaran-art.github.io/wetter-app/ (Push auf `main` = Deploy)
 - Open-Meteo: kostenlos nur nicht-kommerziell; Namensnennung (CC BY 4.0) im Footer muss bleiben

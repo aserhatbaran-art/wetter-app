@@ -53,6 +53,8 @@ button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke
 .chart { display: block; width: 100%; height: auto; overflow: visible; }
 .ch-night { fill: var(--line); opacity: .6; }
 .ch-axis { stroke: var(--line); stroke-width: 1; }
+.ch-feel { fill: none; stroke: var(--warm); stroke-width: 1.5; stroke-dasharray: 4 3; opacity: .75; }
+.ch-lbl.end { text-anchor: end; }
 .ch-line { fill: none; stroke: var(--warm); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
 .ch-dot { fill: var(--warm); }
 .ch-bar { fill: var(--rain); }
@@ -97,14 +99,15 @@ button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke
 .list li + li { border-top: 1px solid var(--line); }
 .sep { padding: 6px 12px; font-size: .8rem; font-weight: 600; color: var(--muted); background: var(--soft); }
 
-.hour { display: grid; grid-template-columns: 3.2em 2em 3em 1fr auto; align-items: center; gap: 8px; min-height: 48px; padding: 6px 12px; }
+.hour { display: grid; grid-template-columns: 3.2em 2em 3.8em 1fr auto; align-items: center; gap: 8px; min-height: 48px; padding: 6px 12px; }
 .hour .t { color: var(--muted); font-variant-numeric: tabular-nums; }
 .hour .i, .day .i { display: flex; justify-content: center; }
-.hour .tmp { font-weight: 600; font-variant-numeric: tabular-nums; }
+.hour .tmp { font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.hour .tmp small { display: block; font-weight: 400; font-size: .74rem; color: var(--muted); }
 .hour .p { color: var(--rain); font-size: .85rem; }
 .hour .w { color: var(--muted); font-size: .85rem; text-align: right; font-variant-numeric: tabular-nums; }
 
-.day { display: grid; grid-template-columns: 4.4em 2em 3.4em 2.2em 1fr 2.2em; align-items: center; gap: 6px; width: 100%; min-height: 54px; padding: 6px 12px; border: 0; background: none; text-align: left; }
+.day { display: grid; grid-template-columns: 4.4em 2em 3.4em 2.2em minmax(0, 1fr) 2.2em; align-items: center; gap: 6px; width: 100%; min-height: 54px; padding: 6px 12px; border: 0; background: none; text-align: left; }
 .day:active { background: var(--line); }
 .day .d { line-height: 1.15; }
 .day .d small { display: block; color: var(--muted); font-size: .78rem; }
@@ -113,6 +116,8 @@ button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke
 .day .p small { display: block; font-size: .76rem; }
 .day .lo { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
 .day .hi { font-weight: 600; font-variant-numeric: tabular-nums; }
+.day .lo, .day .hi { line-height: 1.15; }
+.day .lo small, .day .hi small { display: block; font-size: .74rem; font-weight: 400; color: var(--muted); }
 .bar { position: relative; height: 6px; border-radius: 3px; background: var(--line); }
 .bar span { position: absolute; top: 0; bottom: 0; border-radius: 3px; background: linear-gradient(90deg, var(--cold), var(--warm)); min-width: 6px; }
 .day.trend { opacity: .72; }
