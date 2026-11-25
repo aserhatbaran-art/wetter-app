@@ -9,7 +9,9 @@ Daten: [Open-Meteo](https://open-meteo.com/) – kostenlos, kein API-Schlüssel 
 - Standort per GPS (auf ~1 km gerundet) oder Ortssuche (Name/PLZ), zuletzt genutzte Orte
 - Schnell: ein einziger API-Aufruf für alles; letzte Daten werden sofort aus dem Speicher angezeigt, neu geladen wird erst nach 10 Minuten
 - Offline: App startet ohne Netz und zeigt die letzten Daten mit Hinweis
-- Hell/Dunkel nach Systemeinstellung
+- Modelle: heute und morgen hochaufgelöst (Open-Meteo „best_match“, in DE u. a. ICON-D2), ab übermorgen durchgehend ECMWF IFS (9 km) – keine Modellwechsel mitten in der Vorhersage
+
+Live: https://aserhatbaran-art.github.io/wetter-app/
 
 ## Lokal testen
 ```powershell

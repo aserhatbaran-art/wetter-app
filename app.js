@@ -186,19 +186,55 @@ async function getJSON(url) {
   }
 }
 
+/*
+ * Modellwahl: „best_match“ nutzt in Deutschland bis ca. Tag 7 die DWD-ICON-Modelle und wechselt dann
+ * das Modell. Das erzeugte Ausreißer (ICON allein deutlich kälter als ECMWF/GFS) und Mischtage am
+ * Modellwechsel. Deshalb: heute + morgen hochaufgelöst (best_match, z. B. ICON-D2 2 km),
+ * ab übermorgen durchgehend ECMWF IFS (9 km, 15 Tage). Gewechselt wird nur um Mitternacht.
+ */
+const MODEL_SHORT = 'best_match';
+const MODEL_LONG = 'ecmwf_ifs';
+const SHORT_DAYS = 2;
+const VARS = {
+  hourly: 'temperature_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,is_day',
+  daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,sunrise,sunset',
+};
+
+/** Fügt die Modellreihen (…_best_match / …_ecmwf_ifs) zu einer Reihe zusammen; fehlt ein Wert, springt das andere Modell ein. */
+function mergeModels(raw) {
+  const split = raw.daily.time[SHORT_DAYS] || '9999';
+  const out = { ...raw };
+  for (const sec of ['hourly', 'daily']) {
+    const src = raw[sec];
+    const time = src.time;
+    const merged = { time };
+    for (const v of VARS[sec].split(',')) {
+      const a = src[`${v}_${MODEL_SHORT}`] || src[v];
+      const b = src[`${v}_${MODEL_LONG}`];
+      merged[v] = time.map((t, i) => {
+        const first = t < split ? a : b, second = t < split ? b : a;
+        return first?.[i] ?? second?.[i] ?? null;
+      });
+    }
+    out[sec] = merged;
+  }
+  return out;
+}
+
 async function fetchForecast(loc) {
   const p = new URLSearchParams({
     latitude: loc.lat, longitude: loc.lon, timezone: 'auto', forecast_days: '16',
+    models: `${MODEL_SHORT},${MODEL_LONG}`,
     current: 'temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,wind_gusts_10m,is_day',
-    hourly: 'temperature_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,is_day',
-    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,sunrise,sunset',
+    hourly: VARS.hourly,
+    daily: VARS.daily,
   });
   let lastErr;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const d = await getJSON(`${API_FORECAST}?${p}`);
-      if (!Array.isArray(d?.hourly?.time) || !Array.isArray(d?.daily?.time) || !d.current) throw new Error('Ungültige Antwort');
-      return d;
+      const raw = await getJSON(`${API_FORECAST}?${p}`);
+      if (!Array.isArray(raw?.hourly?.time) || !Array.isArray(raw?.daily?.time) || !raw.current) throw new Error('Ungültige Antwort');
+      return mergeModels(raw);
     } catch (e) {
       lastErr = e;
       if (attempt === 0) await new Promise((res) => setTimeout(res, 800));

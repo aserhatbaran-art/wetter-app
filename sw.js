@@ -1,6 +1,6 @@
 'use strict';
 // Bei jeder Änderung an App-Dateien die Version erhöhen.
-const CACHE = 'wetter-v2';
+const CACHE = 'wetter-v3';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
