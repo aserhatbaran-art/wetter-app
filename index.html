@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.open-meteo.com https://geocoding-api.open-meteo.com; img-src 'self' data:; style-src 'self'; script-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.open-meteo.com https://geocoding-api.open-meteo.com https://maps.dwd.de; img-src 'self' data:; style-src 'self'; script-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
   <meta name="theme-color" content="#ffffff">
   <meta name="description" content="Schlanke Wetter-App: Tagesablauf, 7 und 15 Tage">
   <title>Wetter</title>
@@ -13,6 +13,9 @@
   <script src="app.js" defer></script>
 </head>
 <body>
+  <div id="ptr" class="ptr" aria-hidden="true">
+    <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg>
+  </div>
   <header class="top">
     <button id="btn-place" class="place" type="button" aria-label="Ort wählen">
       <span id="place-name">Ort wählen</span>
@@ -43,6 +46,8 @@
       <p id="cur-meta" class="now-meta"></p>
     </section>
 
+    <section id="notices" class="notices" aria-label="Hinweise und Warnungen" hidden></section>
+
     <p id="status" class="status" role="status" aria-live="polite"></p>
 
     <nav id="tabs" class="tabs" role="tablist" hidden>
@@ -55,7 +60,8 @@
   </main>
 
   <footer class="foot">
-    Wetterdaten: <a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo.com</a> (CC BY 4.0)
+    Wetterdaten: <a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo.com</a> (CC BY 4.0) ·
+    Warnungen: <a href="https://www.dwd.de/warnungen" target="_blank" rel="noopener noreferrer">Deutscher Wetterdienst</a>
   </footer>
 
   <dialog id="search" class="search" aria-label="Ort suchen">

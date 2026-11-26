@@ -1,6 +1,6 @@
 'use strict';
 // Bei jeder Änderung an App-Dateien die Version erhöhen.
-const CACHE = 'wetter-v5';
+const CACHE = 'wetter-v6';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 // cache: 'reload' umgeht den HTTP-Cache des Browsers (GitHub Pages: max-age=600),

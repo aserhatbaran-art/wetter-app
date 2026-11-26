@@ -3,11 +3,13 @@
 /* ---------- Konfiguration ---------- */
 const API_FORECAST = 'https://api.open-meteo.com/v1/forecast';
 const API_GEO = 'https://geocoding-api.open-meteo.com/v1/search';
+// Amtliche DWD-Warnungen je Gemeinde (WFS des DWD-GeoServers, JSON, CORS erlaubt)
+const API_WARN = 'https://maps.dwd.de/geoserver/dwd/ows';
 const STALE_MS = 10 * 60 * 1000;   // ab diesem Alter wird neu geladen
 const TIMEOUT_MS = 10000;
 const K = { loc: 'wx.loc', data: 'wx.data', recent: 'wx.recent', view: 'wx.view' };
 // Erhöhen, wenn sich Abruf oder Modellwahl ändert: alte gespeicherte Wetterdaten werden dann verworfen.
-const DATA_V = 3;
+const DATA_V = 4;
 
 const $ = (s) => document.querySelector(s);
 const store = {
@@ -23,6 +25,9 @@ const state = {
   view: ['hours', 'd7', 'd15'].includes(store.get(K.view)) ? store.get(K.view) : 'hours',
   day: null,                      // 'YYYY-MM-DD' für Tagesablauf eines bestimmten Tages
   loading: false,
+  warnings: [],                   // amtliche DWD-Warnungen für den Ort
+  warnFailed: false,              // letzter Warnungsabruf fehlgeschlagen
+  warnAt: 0,                      // Zeitpunkt des letzten erfolgreichen Warnungsabrufs
 };
 
 /* ---------- WMO-Wettercodes ---------- */
@@ -198,16 +203,19 @@ const MODEL_SHORT = 'best_match';
 const MODEL_LONG = 'ecmwf_ifs';
 const SHORT_DAYS = 2;
 const VARS = {
-  hourly: 'temperature_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,is_day',
+  hourly: 'temperature_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,is_day,soil_temperature_0cm',
   daily: 'weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_sum,precipitation_probability_max,sunrise,sunset',
+  // 15-Minuten-Werte (Summe der VORANGEHENDEN 15 min); in Mitteleuropa echt aus ICON-D2, sonst interpoliert
+  minutely_15: 'precipitation,rain,snowfall',
 };
 
 /** Fügt die Modellreihen (…_best_match / …_ecmwf_ifs) zu einer Reihe zusammen; fehlt ein Wert, springt das andere Modell ein. */
 function mergeModels(raw) {
   const split = raw.daily.time[SHORT_DAYS] || '9999';
   const out = { ...raw };
-  for (const sec of ['hourly', 'daily']) {
+  for (const sec of ['hourly', 'daily', 'minutely_15']) {
     const src = raw[sec];
+    if (!Array.isArray(src?.time)) { delete out[sec]; continue; }
     const time = src.time;
     const merged = { time };
     for (const v of VARS[sec].split(',')) {
@@ -230,6 +238,8 @@ async function fetchForecast(loc) {
     current: 'temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,wind_gusts_10m,is_day',
     hourly: VARS.hourly,
     daily: VARS.daily,
+    minutely_15: VARS.minutely_15,
+    forecast_minutely_15: '12', // 3 h: laufende Viertelstunde + 2 h Ausblick
   });
   let lastErr;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -247,29 +257,141 @@ async function fetchForecast(loc) {
 
 const sameLoc = (a, b) => a && b && a.lat === b.lat && a.lon === b.lon;
 
+/* DWD-Warnungen: nur für Orte in Deutschland (grobe Begrenzung, außerhalb liefert der DWD nichts). */
+const inGermany = (loc) => loc && loc.lat >= 47.2 && loc.lat <= 55.1 && loc.lon >= 5.8 && loc.lon <= 15.1;
+const WARN_LEVEL = { Minor: 1, Moderate: 2, Severe: 3, Extreme: 4 }; // gelb, orange, rot, violett
+const str = (v) => (typeof v === 'string' ? v : '');
+
+async function fetchWarnings(loc) {
+  if (!inGermany(loc)) return [];
+  const lat = Number(loc.lat), lon = Number(loc.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return [];
+  const p = new URLSearchParams({
+    service: 'WFS', version: '2.0.0', request: 'GetFeature', typeName: 'dwd:Warnungen_Gemeinden',
+    outputFormat: 'application/json',
+    CQL_FILTER: `INTERSECTS(THE_GEOM,POINT(${lat} ${lon}))`, // Achsenfolge lat lon (EPSG:4326)
+  });
+  const raw = await getJSON(`${API_WARN}?${p}`);
+  if (!Array.isArray(raw?.features)) throw new Error('Ungültige Warnungen');
+  const seen = new Set();
+  return raw.features
+    .map((f) => f?.properties || {})
+    .filter((w) => w.STATUS === 'Actual' && w.MSGTYPE !== 'Cancel' && str(w.HEADLINE))
+    .map((w) => ({
+      id: str(w.IDENTIFIER), event: str(w.EVENT), headline: str(w.HEADLINE),
+      desc: str(w.DESCRIPTION), instr: str(w.INSTRUCTION),
+      level: WARN_LEVEL[w.SEVERITY] || 1, onset: str(w.ONSET), expires: str(w.EXPIRES),
+    }))
+    .filter((w) => { const key = w.id || `${w.headline}|${w.onset}`; return !seen.has(key) && seen.add(key); })
+    .sort((a, b) => b.level - a.level || a.onset.localeCompare(b.onset));
+}
+
 async function refresh(force = false) {
   if (!state.loc || state.loading) return;
   if (!force && state.data && Date.now() - state.fetchedAt < STALE_MS) return;
   state.loading = true;
-  $('#btn-refresh').classList.add('spin');
+  setBusy(true);
   if (!state.data) setStatus('Lade Wetterdaten …');
   const loc = state.loc;
+  // Warnungen laufen parallel und werden nachgereicht: Der DWD-Server antwortet teils erst nach Sekunden,
+  // die Vorhersage soll darauf nicht warten, und sein Ausfall darf sie nicht verhindern.
+  const seq = ++warnSeq; // nur das Ergebnis des jüngsten Abrufs übernehmen
+  const warnP = fetchWarnings(loc).then((v) => ({ ok: true, v }), () => ({ ok: false }));
   try {
     const d = await fetchForecast(loc);
     if (!sameLoc(loc, state.loc)) return; // Ort wurde inzwischen gewechselt
     state.data = d;
     state.fetchedAt = Date.now();
     state.offline = false;
-    store.set(K.data, { v: DATA_V, loc, fetchedAt: state.fetchedAt, data: d });
+    saveData();
     render();
   } catch {
+    if (!sameLoc(loc, state.loc)) return;
     state.offline = true;
     if (state.data) render();
     else setStatus('Wetterdaten nicht erreichbar. Bitte Verbindung prüfen und erneut versuchen.', true);
   } finally {
     state.loading = false;
-    $('#btn-refresh').classList.remove('spin');
+    setBusy(false);
+    // Ort während des Abrufs gewechselt: Der Abruf für den neuen Ort wurde wegen „loading“ abgewiesen → jetzt nachholen
+    if (!sameLoc(loc, state.loc)) setTimeout(() => refresh(true), 0);
   }
+  const w = await warnP;
+  if (seq !== warnSeq || !sameLoc(loc, state.loc) || !state.data) return;
+  if (w.ok) { state.warnings = w.v; state.warnAt = Date.now(); state.warnFailed = false; } else state.warnFailed = true;
+  saveData();
+  render();
+}
+let warnSeq = 0;
+
+function saveData() {
+  store.set(K.data, {
+    v: DATA_V, loc: state.loc, fetchedAt: state.fetchedAt, data: state.data,
+    warnings: state.warnings, warnAt: state.warnAt,
+  });
+}
+
+/** Lade-Anzeige: Knopf oben dreht sich; ein ausgelöstes Pull-Symbol verschwindet am Ende (laufendes Ziehen bleibt). */
+function setBusy(on) {
+  $('#btn-refresh').classList.toggle('spin', on);
+  if (!on && $('#ptr').classList.contains('spin')) ptrHide();
+}
+
+/* ---------- Ziehen zum Aktualisieren ---------- */
+// Installierte PWAs haben unter Android kein eigenes Pull-to-Refresh; daher selbst umgesetzt.
+const PTR_TRIGGER = 64;  // px Zugweg (gedämpft) bis zum Auslösen
+const PTR_MAX = 96;
+
+function ptrShow(dist) {
+  const ind = $('#ptr');
+  ind.style.transform = `translate(-50%, ${dist - 48}px)`;
+  ind.style.opacity = String(Math.min(dist / PTR_TRIGGER, 1));
+  ind.firstElementChild.style.transform = `rotate(${dist * 4}deg)`;
+  ind.classList.toggle('ready', dist >= PTR_TRIGGER);
+}
+function ptrHide() {
+  const ind = $('#ptr');
+  ind.classList.remove('drag', 'ready', 'spin');
+  ind.style.transform = '';
+  ind.style.opacity = '';
+}
+
+function initPullToRefresh() {
+  const ind = $('#ptr');
+  let y0 = null, x0 = 0, dist = 0;
+  const cancel = () => { y0 = null; dist = 0; if (!ind.classList.contains('spin')) ptrHide(); };
+
+  window.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || window.scrollY > 0 || !state.loc || state.loading || $('#search').open) return;
+    y0 = e.touches[0].clientY;
+    x0 = e.touches[0].clientX;
+    dist = 0;
+  }, { passive: true });
+
+  window.addEventListener('touchmove', (e) => {
+    if (y0 == null) return;
+    if (e.touches.length > 1) { cancel(); return; } // Zwei-Finger-Geste (Zoom)
+    const dy = e.touches[0].clientY - y0;
+    const dx = Math.abs(e.touches[0].clientX - x0);
+    // Nach oben, seitlich (z. B. Diagramm) oder Seite scrollt bereits → kein Pull
+    if (dy <= 0 || window.scrollY > 0 || (dist === 0 && dx > dy)) { cancel(); return; }
+    dist = Math.min(PTR_MAX, dy * 0.5);
+    ind.classList.add('drag');
+    ptrShow(dist);
+  }, { passive: true });
+
+  const end = () => {
+    if (y0 == null) return;
+    const fire = dist >= PTR_TRIGGER && !state.loading;
+    y0 = null;
+    ind.classList.remove('drag');
+    if (!fire) { cancel(); return; }
+    ptrShow(PTR_TRIGGER);
+    ind.classList.add('spin');
+    refresh(true);
+  };
+  window.addEventListener('touchend', end);
+  window.addEventListener('touchcancel', () => { if (y0 != null) { y0 = null; cancel(); } });
 }
 
 /* ---------- Standort ---------- */
@@ -280,7 +402,7 @@ function setLoc(loc) {
   state.loc = loc;
   store.set(K.loc, loc);
   if (!loc.gps) addRecent(loc);
-  if (changed) { state.data = null; state.fetchedAt = 0; state.day = null; }
+  if (changed) { state.data = null; state.fetchedAt = 0; state.day = null; state.warnings = []; state.warnFailed = false; state.warnAt = 0; }
   render();
   refresh(true);
 }
@@ -477,9 +599,10 @@ function render() {
   const d = state.data;
   $('#now').hidden = !d;
   $('#tabs').hidden = !d;
-  if (!d) { $('#panel').replaceChildren(); return; }
+  if (!d) { $('#panel').replaceChildren(); $('#notices').hidden = true; return; }
 
   renderCurrent(d);
+  renderNotices(d);
   const stamp = fmtStamp.format(new Date(state.fetchedAt));
   if (state.offline) setStatus(`Offline – zeige Daten vom ${stamp}`, true);
   else setStatus(`Aktualisiert ${fmtTime.format(new Date(state.fetchedAt))}${state.loc.sub ? ' · ' + state.loc.sub : ''}`);
@@ -501,6 +624,148 @@ function renderCurrent(d) {
     `Gefühlt ${deg(c.apparent_temperature)} · Wind ${r0(c.wind_speed_10m)} km/h` +
     (c.wind_gusts_10m >= 40 ? ` (Böen ${r0(c.wind_gusts_10m)})` : '') +
     ` · Feuchte ${r0(c.relative_humidity_2m)} %`;
+}
+
+/* ---------- Hinweise: Warnungen, Niederschlag, Frost ---------- */
+/** Ortszeit 'YYYY-MM-DDTHH:MM'; Zeitrechnung auf Ortszeit-Strings über UTC als neutrale Uhr. */
+const locNowMin = (d) => new Date(Date.now() + (d.utc_offset_seconds || 0) * 1000).toISOString().slice(0, 16);
+const addMin = (iso, min) => new Date(Date.parse(`${iso.slice(0, 16)}Z`) + min * 60000).toISOString().slice(0, 16);
+
+const notice = (kind, text) => el('p', `notice ${kind}`, text);
+const fmtWdLong = new Intl.DateTimeFormat('de-DE', { weekday: 'long' });
+
+function fmtWhen(iso, tz) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const opt = { weekday: 'short', hour: '2-digit', minute: '2-digit' };
+  try { return new Intl.DateTimeFormat('de-DE', { ...opt, timeZone: tz }).format(t); }
+  catch { return new Intl.DateTimeFormat('de-DE', opt).format(t); }
+}
+
+function warnCard(w, d) {
+  const det = el('details', `notice warn lvl-${w.level}`);
+  const sum = el('summary');
+  const tz = d.timezone;
+  const started = Date.parse(w.onset) <= Date.now();
+  const when = [
+    w.onset && !started ? `ab ${fmtWhen(w.onset, tz)}` : '',
+    w.expires ? `bis ${fmtWhen(w.expires, tz)}` : 'bis auf Weiteres',
+  ].filter(Boolean).join(' ');
+  sum.append(el('strong', null, w.headline), el('small', null, when + (w.desc ? ' · Details' : '')));
+  det.append(sum);
+  if (w.desc) det.append(el('p', null, w.desc));
+  if (w.instr) det.append(el('p', 'instr', w.instr));
+  return det;
+}
+
+const RAIN_MIN = 0.1; // mm je 15 min (Auflösung der API)
+function mKind(m, sel) {
+  const snow = sel.some((i) => (m.snowfall?.[i] ?? 0) > 0);
+  const rain = sel.some((i) => (m.rain?.[i] ?? 0) >= RAIN_MIN);
+  return snow && rain ? 'Schneeregen' : snow ? 'Schneefall' : 'Regen';
+}
+
+/** Kurzer Ausblick: nächste 2 h im 15-Minuten-Raster, danach bis 6 h stündlich. null = bleibt trocken. */
+function precipNotice(d) {
+  const m = d.minutely_15;
+  const h = d.hourly;
+  const now = locNowMin(d);
+  let coarseFrom = 1;
+  if (m?.time?.length && m.precipitation) {
+    // Wert gilt für die 15 min VOR dem Zeitstempel → erster Zeitstempel nach „jetzt“ = laufende Viertelstunde
+    const is = [];
+    for (let i = 0; i < m.time.length && is.length < 8; i++) if (m.time[i] > now) is.push(i);
+    if (is.length === 8) {
+      coarseFrom = 3; // Stunden 1–2 deckt das 15-Minuten-Raster ab
+      const wet = is.map((i) => (m.precipitation[i] ?? 0) >= RAIN_MIN);
+      const first = wet.indexOf(true);
+      if (first >= 0) {
+        let last = first;
+        while (last + 1 < is.length && wet[last + 1]) last++;
+        const sel = is.slice(first, last + 1);
+        const rate = Math.max(...sel.map((i) => m.precipitation[i] ?? 0)) * 4; // mm/h
+        let adj = rate >= 4 ? 'Starker ' : rate < 0.5 ? 'Leichter ' : '';
+        // Gewitter kennt nur der Stundencode: Stunde, in der das jeweilige 15-min-Intervall liegt
+        const hourIdx = (iso) => h.time.indexOf(iso.slice(14, 16) === '00' ? `${iso.slice(0, 13)}:00` : `${addMin(iso, 60).slice(0, 13)}:00`);
+        const thunder = sel.some((i) => THUNDER.has(h.weather_code[hourIdx(m.time[i])]));
+        const kind = thunder ? 'Gewitter' : mKind(m, sel);
+        if (thunder) adj = ''; // „das Gewitter“: kein passendes Adjektiv in der männlichen Form
+        const open = last === is.length - 1; // reicht bis ans Ende des 2-h-Fensters
+        const end = hhmm(m.time[is[last]]);
+        if (first === 0) return open ? `${adj}${kind} hält die nächsten 2 Stunden an.` : `${adj}${kind} hört gegen ${end} auf.`;
+        const start = hhmm(addMin(m.time[is[first]], -15));
+        return `${adj}${kind} ab ca. ${start}${open ? '' : `, bis ca. ${end}`}.`;
+      }
+    }
+  }
+  // Grob: Stundenwerte (gelten für die Stunde VOR dem Zeitstempel)
+  const h0 = nowHourIndex(d);
+  for (let k = coarseFrom; k <= 6; k++) {
+    const i = h0 + k;
+    if (i >= h.time.length) break;
+    if (!wetAt(h, i)) continue;
+    const p = h.precipitation_probability?.[i];
+    return `Später ${precipKind(h, [i])}: ab ca. ${hourOf(h.time[i], 1)} Uhr${p != null ? ` (${Math.round(p)} %)` : ''}.`;
+  }
+  return null;
+}
+
+/** Frost für die kommende Nacht (bis 10 Uhr morgens). Bodenfrost: Oberflächentemperatur ≤ 0 oder klare Nacht ≤ 3 °C. */
+function frostNotice(d) {
+  const h = d.hourly;
+  const nowK = locNowKey(d);
+  const today = nowK.slice(0, 10);
+  const hour = Number(nowK.slice(11, 13));
+  let from, to, label;
+  if (hour < 10) { from = nowK; to = `${today}T10`; label = 'heute früh'; }
+  else {
+    const tomorrow = d.daily.time[todayIndex(d) + 1];
+    if (!tomorrow) return null;
+    // Nachtfenster ab Sonnenuntergang (sonst lösen kühle Nachmittage im Frühjahr „Nacht“-Hinweise aus)
+    const dusk = str(d.daily.sunset?.[todayIndex(d)]).slice(0, 13) || `${today}T18`;
+    from = nowK > dusk ? nowK : dusk;
+    to = `${tomorrow}T10`;
+    label = `in der Nacht zu ${fmtWdLong.format(parseDay(tomorrow))}`;
+  }
+  let iMin = -1, soilMin = Infinity;
+  h.time.forEach((t, i) => {
+    const k = t.slice(0, 13);
+    if (k < from || k > to || h.temperature_2m[i] == null) return;
+    if (iMin < 0 || h.temperature_2m[i] < h.temperature_2m[iMin]) iMin = i;
+    const s = h.soil_temperature_0cm?.[i];
+    if (s != null && s < soilMin) soilMin = s;
+  });
+  if (iMin < 0) return null;
+  const tmin = h.temperature_2m[iMin];
+  const at = `gegen ${hourOf(h.time[iMin])} Uhr`;
+  if (Math.round(tmin) < 0) {
+    return `${tmin <= -10 ? 'Strenger Frost' : 'Frost'} ${label}: bis ${deg(tmin)} ${at}.`;
+  }
+  const clear = (h.weather_code[iMin] ?? 99) <= 1;
+  if (tmin <= 4 && (soilMin <= 0 || (tmin <= 3 && clear))) {
+    return `Bodenfrost möglich ${label} (Luft bis ${deg(tmin)}): Reif und Glätte auf Scheiben und Wegen.`;
+  }
+  return null;
+}
+
+function renderNotices(d) {
+  const box = $('#notices');
+  const out = [];
+  const now = Date.now();
+  // Unlesbares Ablaufdatum: Warnung lieber zeigen als still verschlucken
+  const active = state.warnings.filter((w) => !(Date.parse(w.expires) <= now));
+  active.forEach((w) => out.push(warnCard(w, d)));
+  if (state.warnFailed && inGermany(state.loc)) {
+    out.push(notice('muted', 'Amtliche DWD-Warnungen sind gerade nicht abrufbar' +
+      (active.length && state.warnAt ? ` – angezeigt: Stand ${fmtStamp.format(new Date(state.warnAt))}.` : '.')));
+  }
+  const pr = precipNotice(d);
+  if (pr) out.push(notice('rain', pr));
+  // Eigener Frosthinweis entfällt, wenn der DWD ohnehin vor Frost warnt
+  const fr = active.some((w) => w.event.includes('FROST')) ? null : frostNotice(d);
+  if (fr) out.push(notice('frost', fr));
+  box.replaceChildren(...out);
+  box.hidden = !out.length;
 }
 
 function precipText(prob, mm) {
@@ -704,6 +969,8 @@ function init() {
   if (cached?.v === DATA_V && state.loc && sameLoc(cached.loc, state.loc) && cached.data?.hourly) {
     state.data = cached.data;
     state.fetchedAt = cached.fetchedAt || 0;
+    state.warnings = Array.isArray(cached.warnings) ? cached.warnings : [];
+    state.warnAt = cached.warnAt || 0;
   }
 
   $('.empty-icon').replaceChildren(icon(2, 1, true));
@@ -730,6 +997,7 @@ function init() {
     navigator.serviceWorker?.getRegistration().then((r) => r?.update()).catch(() => {});
   });
   window.addEventListener('online', () => refresh(true));
+  initPullToRefresh();
 
   render();
   refresh();
