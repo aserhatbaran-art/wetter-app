@@ -7,6 +7,7 @@ const API_GEO = 'https://geocoding-api.open-meteo.com/v1/search';
 const API_WARN = 'https://maps.dwd.de/geoserver/dwd/ows';
 const STALE_MS = 10 * 60 * 1000;   // ab diesem Alter wird neu geladen
 const TIMEOUT_MS = 10000;
+const WARN_TIMEOUT_MS = 25000;
 const K = { loc: 'wx.loc', data: 'wx.data', recent: 'wx.recent', view: 'wx.view' };
 // Erhöhen, wenn sich Abruf oder Modellwahl ändert: alte gespeicherte Wetterdaten werden dann verworfen.
 const DATA_V = 4;
@@ -181,9 +182,9 @@ function dayLabel(d, iso) {
 }
 
 /* ---------- Netzwerk ---------- */
-async function getJSON(url) {
+async function getJSON(url, timeout = TIMEOUT_MS) {
   const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  const t = setTimeout(() => ctl.abort(), timeout);
   try {
     const r = await fetch(url, { signal: ctl.signal, cache: 'no-store' });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -269,9 +270,11 @@ async function fetchWarnings(loc) {
   const p = new URLSearchParams({
     service: 'WFS', version: '2.0.0', request: 'GetFeature', typeName: 'dwd:Warnungen_Gemeinden',
     outputFormat: 'application/json',
+    propertyName: 'IDENTIFIER,STATUS,MSGTYPE,EVENT,HEADLINE,DESCRIPTION,INSTRUCTION,SEVERITY,ONSET,EXPIRES',
     CQL_FILTER: `INTERSECTS(THE_GEOM,POINT(${lat} ${lon}))`, // Achsenfolge lat lon (EPSG:4326)
   });
-  const raw = await getJSON(`${API_WARN}?${p}`);
+  // Der DWD-Server braucht mal 1 s, mal über 10 s; Warnungen werden nachgereicht, daher großzügig warten
+  const raw = await getJSON(`${API_WARN}?${p}`, WARN_TIMEOUT_MS);
   if (!Array.isArray(raw?.features)) throw new Error('Ungültige Warnungen');
   const seen = new Set();
   return raw.features

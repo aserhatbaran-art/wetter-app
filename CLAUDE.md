@@ -34,6 +34,6 @@ Zweck: Schlanke, installierbare Wetter-Webapp für Android mit Tagesablauf, 7 un
 - Beim lokalen Testen cached der Service Worker alte Dateien: SW abmelden + Caches leeren oder hart neu laden
 - Mehrere Modelle in einem Abruf: hourly/daily-Schlüssel tragen den Modellnamen (`_best_match`, `_ecmwf_ifs`), `current` nicht; `ecmwf_ifs` reicht 15 Tage (Regenwahrscheinlichkeit nur 14)
 - Repo: https://github.com/aserhatbaran-art/wetter-app (öffentlich); Pages-Build dauert ca. 25 s
-- DWD-Warnungen: WFS `maps.dwd.de/geoserver/dwd/ows`, Layer `dwd:Warnungen_Gemeinden`, `CQL_FILTER=INTERSECTS(THE_GEOM,POINT(lat lon))` (Reihenfolge lat lon!), CORS erlaubt, nur Deutschland; antwortet teils erst nach 5–10 s → Warnungen werden nach der Vorhersage nachgereicht. Quellenvermerk DWD im Footer muss bleiben
+- DWD-Warnungen: WFS `maps.dwd.de/geoserver/dwd/ows`, Layer `dwd:Warnungen_Gemeinden`, `CQL_FILTER=INTERSECTS(THE_GEOM,POINT(lat lon))` (Reihenfolge lat lon!), CORS erlaubt, nur Deutschland; antwortet stark schwankend (1 bis über 10 s) → Warnungen werden nach der Vorhersage nachgereicht, eigener Timeout 25 s, nur benötigte Felder per `propertyName`. Quellenvermerk DWD im Footer muss bleiben
 - `minutely_15` (precipitation/rain/snowfall) nur für den 2-h-Niederschlagshinweis; Werte gelten für die VORANGEHENDEN 15 min; echte 15-min-Daten nur über ICON-D2 (Mitteleuropa)
 - Eigener Frosthinweis entfällt, wenn eine DWD-Frostwarnung aktiv ist
