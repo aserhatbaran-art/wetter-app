@@ -396,6 +396,11 @@ function chart(d, idx, dayMode) {
 
   const temps = idx.map((i) => h.temperature_2m[i]);
   const feels = idx.map((i) => h.apparent_temperature?.[i] ?? null);
+  // „Jetzt“ zeigt wie der Kopfbereich den aktuellen 15-Minuten-Wert statt der vollen Stunde
+  if (!dayMode && d.current) {
+    if (d.current.temperature_2m != null) temps[0] = d.current.temperature_2m;
+    if (d.current.apparent_temperature != null) feels[0] = d.current.apparent_temperature;
+  }
   const valid = temps.concat(feels).filter((v) => v != null);
   const tmin = Math.min(...valid), tmax = Math.max(...valid);
   const range = Math.max(tmax - tmin, 4);
@@ -546,19 +551,23 @@ function renderHours(d) {
     if (!state.day && lastDate && date !== lastDate) ul.append(el('li', 'sep', `${dayLabel(d, date)}, ${fmtDm.format(parseDay(date))}`));
     lastDate = date;
     const li = el('li', 'hour');
-    const feel = h.apparent_temperature?.[i];
-    li.setAttribute('aria-label', `${hhmm(h.time[i])} Uhr, ${wxText(h.weather_code[i])}, ${deg(h.temperature_2m[i])}` +
+    // Erste Zeile ohne Tagesauswahl = „Jetzt“: Werte aus current wie im Kopfbereich (Niederschlag bleibt stündlich)
+    const now = k === 0 && !state.day ? d.current : null;
+    const pick = (key) => now?.[key] ?? h[key]?.[i];
+    const temp = pick('temperature_2m'), code = pick('weather_code');
+    const feel = pick('apparent_temperature');
+    li.setAttribute('aria-label', `${now ? 'Jetzt' : `${hhmm(h.time[i])} Uhr`}, ${wxText(code)}, ${deg(temp)}` +
       (feel != null ? `, gefühlt ${deg(feel)}` : ''));
-    const tmp = el('span', 'tmp', deg(h.temperature_2m[i]));
+    const tmp = el('span', 'tmp', deg(temp));
     if (feel != null) tmp.append(el('small', null, `gef. ${deg(feel)}`));
     const ic = el('span', 'i');
-    ic.append(icon(h.weather_code[i], h.is_day[i]));
+    ic.append(icon(code, pick('is_day')));
     li.append(
-      el('span', 't', k === 0 && !state.day ? 'Jetzt' : hhmm(h.time[i])),
+      el('span', 't', now ? 'Jetzt' : hhmm(h.time[i])),
       ic,
       tmp,
       el('span', 'p', precipText(h.precipitation_probability?.[i], h.precipitation?.[i])),
-      el('span', 'w', `${r0(h.wind_speed_10m[i])} km/h`),
+      el('span', 'w', `${r0(pick('wind_speed_10m'))} km/h`),
     );
     ul.append(li);
   });

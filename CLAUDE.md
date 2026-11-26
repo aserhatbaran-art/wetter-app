@@ -32,3 +32,5 @@ Zweck: Schlanke, installierbare Wetter-Webapp für Android mit Tagesablauf, 7 un
 - Open-Meteo-Stundenwerte für Niederschlag gelten für die VORANGEHENDE Stunde (`summary()` rechnet damit)
 - `svg.append()` gibt nichts zurück: SVG-Texte über `svText()` erzeugen
 - Beim lokalen Testen cached der Service Worker alte Dateien: SW abmelden + Caches leeren oder hart neu laden
+- Mehrere Modelle in einem Abruf: hourly/daily-Schlüssel tragen den Modellnamen (`_best_match`, `_ecmwf_ifs`), `current` nicht; `ecmwf_ifs` reicht 15 Tage (Regenwahrscheinlichkeit nur 14)
+- Repo: https://github.com/aserhatbaran-art/wetter-app (öffentlich); Pages-Build dauert ca. 25 s
